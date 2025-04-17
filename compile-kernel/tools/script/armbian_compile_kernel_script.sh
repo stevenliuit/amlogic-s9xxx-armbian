@@ -71,14 +71,14 @@ auto_kernel="true"
 # Set whether to apply custom kernel patches, options: [ true / false ]
 auto_patch="false"
 # Set custom signature for the kernel
-custom_name="-ophub"
+custom_name="-dearxjoe"
 # Set the kernel compile object, options: [ dtbs / all ]
 package_list="all"
 # Set the compression format, options: [ gzip / lzma / xz / zstd ]
 compress_format="xz"
 
 # Compile toolchain download mirror, run on Armbian
-dev_repo="https://github.com/ophub/kernel/releases/download/dev"
+dev_repo="https://github.com/dearxjoe/kernel/releases/download/dev"
 # Arm GNU Toolchain source: https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads
 gun_file="arm-gnu-toolchain-14.2.rel1-aarch64-aarch64-none-elf.tar.xz"
 # Set the toolchain path
