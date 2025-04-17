@@ -194,10 +194,10 @@ on:
       kernel_repo:
         description: "Set the kernel repository."
         required: false
-        default: "ophub/kernel"
+        default: "stevenliuit/kernel"
         type: choice
         options:
-          - ophub/kernel
+          - stevenliuit/kernel
       kernel_usage:
         description: "Set the tags of the stable kernel."
         required: false
@@ -227,12 +227,12 @@ on:
       builder_name:
         description: "Set Armbian builder signature."
         required: false
-        default: "ophub"
+        default: "stevenliuit"
         type: choice
         options:
           - ophub
           - angel
-          - yourname
+          - stevenliuit
 
 env:
   TZ: America/New_York
@@ -319,14 +319,14 @@ jobs:
 
           mkdir -p /builder/build
           ln -sf /builder/build ${GITHUB_WORKSPACE}/build
-          ln -sf /builder/build /home/runner/work/_actions/ophub/amlogic-s9xxx-armbian/main/build
+          ln -sf /builder/build /home/runner/work/_actions/stevenliuit/amlogic-s9xxx-armbian/main/build
 
           sudo timedatectl set-timezone "${TZ}"
           echo "build_tag=Armbian${set_release}_${{ inputs.armbian_storage }}_$(date +"%Y.%m")" >> ${GITHUB_OUTPUT}
           echo "status=success" >> ${GITHUB_OUTPUT}
 
       - name: Rebuild Armbian
-        uses: ophub/amlogic-s9xxx-armbian@main
+        uses: stevenliuit/amlogic-s9xxx-armbian@main
         if: ${{ env.ARMBIAN_URL }} != '' && !cancelled()
         with:
           build_target: armbian
