@@ -1,0 +1,56 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * Minimal placeholder DTS for the G98 NVR board.
+ *
+ * This file is *not* the full mainline DTS — it exists only so that
+ * dtbtool / dtc can validate the build pipeline before the real
+ * mainline rk3588-g98.dts is merged.  Once the kernel fork
+ * (stevenliuit/linux-6.6.y) is rebuilt and the real DTB lands
+ * in build-armbian/armbian-files/platform-files/rockchip/bootfs/dtb/rockchip/,
+ * this file is ignored.
+ *
+ * Real DTS location:
+ *   linux-6.6/arch/arm64/boot/dts/rockchip/rk3588-g98-common.dtsi
+ *   linux-6.6/arch/arm64/boot/dts/rockchip/rk3588-g98.dtsi
+ *   linux-6.6/arch/arm64/boot/dts/rockchip/rk3588-g98-spi-nor.dts
+ */
+
+/dts-v1/;
+
+/ {
+    model = "Rockchip RK3588 G98 NVR Board (LP4 SPI NOR)";
+    compatible = "rockchip,rk3588-g98", "rockchip,rk3588";
+
+    aliases {
+        ethernet0 = &gmac0;
+        ethernet1 = &gmac1;
+        mmc0 = &sdhci;
+        mmc1 = &sdmmc;
+        serial2 = &uart2;
+        spi5 = &sfc;
+    };
+
+    chosen {
+        stdout-path = "serial2:1500000n8";
+        bootargs = "earlycon=uart8250,mmio32,0xfeb50000 console=ttyFIQ0 rootwait";
+    };
+
+    /* These labels are declared as &gmac0 / &gmac1 / &sdhci / &sdmmc /
+     * &uart2 / &sfc in rk3588-g98-common.dtsi / rk3588-g98.dtsi.
+     * The placeholder DTS intentionally does not redefine them;
+     * the kernel-built DTB has the full node list. */
+};
+
+/* Suppress unresolved-label warnings for the labels referenced above.
+ * Real nodes live in rk3588-g98-common.dtsi.  When this placeholder
+ * is compiled standalone (for CI smoke tests) we provide stub phandles. */
+&{/} {
+    soc {
+        gmac0: ethernet@fe1b0000 { reg = <0xfe1b0000 0x0>; status = "reserved"; };
+        gmac1: ethernet@fe1c0000 { reg = <0xfe1c0000 0x0>; status = "reserved"; };
+        sdhci: mmc@fe2e0000      { reg = <0xfe2e0000 0x0>; status = "reserved"; };
+        sdmmc: mmc@fe310000      { reg = <0xfe310000 0x0>; status = "reserved"; };
+        uart2: serial@feb50000   { reg = <0xfeb50000 0x0>; status = "reserved"; };
+        sfc:    spi@feb10000     { reg = <0xfeb10000 0x0>; status = "reserved"; };
+    };
+};

@@ -1,0 +1,3 @@
+# G98 row to append to the RK3588/RK3588S section of model_database.conf.
+# ID  MODEL  SOC  FDTFILE  TRUST_IMG  MAINLINE_UBOOT  BOOTLOADER_IMG  DESCRIPTION  KERNEL_TAGS  PLATFORM  FAMILY  BOOT_CONF  CONTRIBUTORS  BOARD  BUILD
+r201	:G98  :rk3588s  :rk3588s-g98.dtb  :NA  :u-boot.itb  :idbloader.img  :NVR, SPI-NOR, 16GB-LPDDR5, 2x YT9215 (8x GbE) + 2x RTL8125 (2.5 GbE PCIe)  :rk3588/6.1.y  :rockchip  :rk3588s  :armbianEnv.txt  :stevenliuit  :g98  :yes

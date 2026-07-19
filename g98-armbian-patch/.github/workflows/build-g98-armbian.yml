@@ -1,0 +1,87 @@
+# Workflow: build the G98 (RK3588S, SPI-NOR) Armbian image.
+# Drop this in your fork at .github/workflows/build-g98-armbian.yml
+name: Build G98 Armbian image
+
+on:
+  workflow_dispatch:
+    inputs:
+      armbian_kernel:
+        description: "Kernel tag (e.g. 6.1.y, 6.6.y)"
+        required: false
+        default: "6.1.y"
+      kernel_repo:
+        description: "GitHub <owner>/<repo> of the kernel fork"
+        required: false
+        default: "stevenliuit/linux-6.1.y"
+      armbian_fstype:
+        description: "ROOTFS file system"
+        required: false
+        default: "ext4"
+      push_to_release:
+        description: "Upload the resulting image to a GitHub Release"
+        type: boolean
+        default: false
+      release_tag:
+        description: "Release tag"
+        required: false
+        default: "g98-latest"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/build-g98-armbian.yml"
+      - "build-armbian/**"
+      - "rebuild"
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 720
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+          path: amlogic-s9xxx-armbian
+          fetch-depth: 0
+
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+              build-essential gcc-aarch64-linux-gnu bison flex libssl-dev \
+              bc python3 dosfstools e2fsprogs parted udev libelf-dev \
+              uuid-dev gcc-arm-none-eabi
+
+      - name: Compile custom kernel for G98
+        working-directory: amlogic-s9xxx-armbian
+        env:
+          KERNEL_REPO: ${{ inputs.kernel_repo }}
+        run: |
+          set -e
+          sudo bash compile-kernel/tools/script/armbian_compile_kernel.sh \
+              -r "$KERNEL_REPO" -k "${{ inputs.armbian_kernel }}" -u stable \
+              -m all -n -stevenliuit -a true -t gcc -f rk3588 -d true -s false -z xz
+
+      - name: Rebuild for g98
+        working-directory: amlogic-s9xxx-armbian
+        run: |
+          sudo ./rebuild -b g98 -k "${{ inputs.armbian_kernel }}" \
+              -r stevenliuit/armbian-kernel -u stable -a true -t "${{ inputs.armbian_fstype }}" -n -stevenliuit
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: g98-armbian-image
+          path: |
+            build/output/images/*g98*.img
+            build/output/images/*g98*.img.gz
+          if-no-files-found: warn
+
+      - name: Optional release
+        if: ${{ inputs.push_to_release == 'true' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.release_tag }}
+          files: |
+            build/output/images/*g98*.img.gz

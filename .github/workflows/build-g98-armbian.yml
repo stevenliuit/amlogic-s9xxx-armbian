@@ -1,0 +1,216 @@
+# Workflow: build the G98 (RK3588, SPI-NOR) Armbian image.
+#
+# Uses GitHub-hosted ARM64 runner (ubuntu-24.04-arm) so the ophub
+# compile-kernel script's arch check passes (`uname -m == aarch64`).
+# The kernel itself is cross-compiled with clang/LLVM which is
+# natively supported on both x86_64 and aarch64 hosts.
+#
+# Inputs:
+#   armbian_kernel: kernel tag (e.g. "6.6.y", "6.1.y")
+#   kernel_repo:    GitHub <owner>/<repo> for the kernel fork
+#   armbian_fstype: ROOTFS file system (ext4 / btrfs)
+#   push_to_release: upload image to GitHub Release
+#   release_tag:    Release tag name
+name: Build G98 Armbian image
+
+on:
+  workflow_dispatch:
+    inputs:
+      armbian_kernel:
+        description: "Kernel tag (e.g. 6.1.y, 6.6.y)"
+        required: false
+        default: "6.6.y"
+      kernel_repo:
+        description: "GitHub <owner>/<repo> of the kernel fork"
+        required: false
+        default: "stevenliuit/linux"
+      armbian_fstype:
+        description: "ROOTFS file system"
+        required: false
+        default: "ext4"
+      push_to_release:
+        description: "Upload artifacts to a GitHub Release"
+        type: boolean
+        default: false
+      release_tag:
+        description: "Release tag"
+        required: false
+        default: "g98-latest"
+  push:
+    branches:
+      - main
+    paths:
+        - ".github/workflows/build-g98-armbian.yml"
+        - "build-armbian/**"
+        - "rebuild"
+
+jobs:
+  build:
+    # Use GitHub-hosted ARM64 runner so the ophub compile-kernel script's
+    # arch_info == aarch64 check passes. Native apt + clang + LLVM work fine
+    # on aarch64; the script downloads x86_64 cross-toolchains only when -t gcc
+    # is passed, which we avoid by forcing -t clang below.
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 720
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      # Hardcode the kernel repo since workflow_dispatch inputs sometimes fail to
+      # propagate via the GitHub API. Use stevenliuit/linux which contains the
+      # G98 DTS + YT921x driver.
+      KERNEL_REPO: stevenliuit/linux
+
+    steps:
+      - name: Set kernel tag default
+        run: |
+          # GitHub Actions workflow_dispatch inputs don't always propagate via
+          # the REST API, so force the env vars to the only supported values
+          # for G98. The `||` ensures that if the input is missing/empty,
+          # the default is used.
+          echo "armbian_kernel=${{ inputs.armbian_kernel || '6.6.y' }}" >> $GITHUB_ENV
+          echo "kernel_repo=${{ inputs.kernel_repo || 'stevenliuit/linux' }}" >> $GITHUB_ENV
+          echo "armbian_fstype=${{ inputs.armbian_fstype || 'ext4' }}" >> $GITHUB_ENV
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+          path: amlogic-s9xxx-armbian
+          fetch-depth: 0
+
+      - name: Install aarch64-native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+              build-essential gcc g++ make bc libssl-dev libncurses-dev \
+              libelf-dev libdw-dev binutils-dev bison flex ccache \
+              device-tree-compiler kmod libkmod-dev kpartx parted \
+              udev git rsync curl wget xz-utils pigz lz4 zstd \
+              ca-certificates locales libfdt-dev libgmp3-dev libmpc-dev \
+              libpython3-dev python3 python3-dev python3-setuptools \
+              qemu-utils cpio gettext-base \
+              file gawk grep sed gperf autogen automake autoconf libtool \
+              texinfo help2man ncurses-dev uuid-dev \
+              libusb-1.0-0-dev libftdi1-dev swig libhidapi-libusb0 \
+              lld-17 llvm-17-tools clang-17 lld \
+              dosfstools mtools squashfs-tools genisoimage xorriso \
+              isolinux fakeroot fakechroot \
+              libarchive-tools cpio binwalk pixz \
+              libgpiod-dev libi2c-dev \
+              apt-transport-https gnupg ca-certificates software-properties-common
+          sudo locale-gen en_US.UTF-8
+          # Install LLVM 22 from apt.llvm.org so /usr/bin/llvm-ar-22 etc. exist
+          # before we set up the update-alternatives below. The compile-kernel.sh
+          # script also calls `apt.llvm.org/llvm.sh all` but that may install
+          # an even-newer version; we want 22 explicitly to match rustc 1.97's
+          # bundled LLVM 18.1.3 attribute compatibility.
+          # Add the LLVM apt repo first (apt.llvm.org/noble/dists/noble).
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
+          echo "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-22 main" | sudo tee /etc/apt/sources.list.d/llvm-22.list >/dev/null
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+              clang-22 lld-22 llvm-22-dev llvm-22-tools lldb-22 \
+              clangd-22 clang-tidy-22 clang-format-22 clang-tools-22 \
+              libclang-22-dev libomp-22-dev libc++-22-dev libc++abi-22-dev
+          # update-alternatives makes /usr/local/bin/<tool> point to the
+          # /usr/bin/<tool>-22 binary. /usr/local/bin is FIRST in PATH
+          # (ophub sets this), so this wins over the system default (=17).
+          for t in clang clang++ ld.lld llvm-ar llvm-nm llvm-objcopy \
+                  llvm-readelf llvm-objdump llvm-strings llvm-ranlib \
+                  llvm-size llvm-strip llvm-strip llvm-link; do
+              if [ -x /usr/bin/${t}-22 ]; then
+                  sudo update-alternatives --install /usr/local/bin/${t} ${t} /usr/bin/${t}-22 100 2>/dev/null || true
+                  sudo ln -sf /usr/bin/${t}-22 /usr/local/bin/${t}
+              fi
+          done
+
+      - name: Disable ophub deps install (use pre-installed + clang)
+        working-directory: amlogic-s9xxx-armbian
+        run: |
+          # Empty the deps file so the script's `apt-get install $(cat ...)` is a no-op.
+          echo "# aarch64-native deps installed by workflow" \
+              > compile-kernel/tools/script/armbian-compile-kernel-depends
+          echo "" >> compile-kernel/tools/script/armbian-compile-kernel-depends
+
+      - name: Patch compile-kernel.sh for 6.6 kernel
+        working-directory: amlogic-s9xxx-armbian
+        run: |
+          # The compile-kernel.sh script does `rm -rf ${config_path}/*` then
+          # copies configs from ophub/kernel (which only has 5.10/6.1).
+          # For 6.6 builds we need to keep our config-6.6 file. We do this
+          # by replacing the script's `rm -rf` with a no-op (skip).
+          echo "armbian_kernel env: $armbian_kernel"
+          if [[ "$armbian_kernel" == 6.6* ]]; then
+              sed -i 's|^    rm -rf ${config_path}/\*|    : # skip (config-6.6 shipped in-repo)|' \
+                  compile-kernel/tools/script/armbian_compile_kernel.sh
+              grep -n 'rm -rf' compile-kernel/tools/script/armbian_compile_kernel.sh
+          fi
+
+      - name: Compile custom kernel for G98
+        working-directory: amlogic-s9xxx-armbian
+        env:
+          ARMB_KERNEL: ${{ inputs.armbian_kernel || '6.6.y' }}
+          ARMB_REPO: ${{ inputs.kernel_repo || 'stevenliuit/linux' }}
+        run: |
+          set -e
+          echo "Building kernel with: ARMB_KERNEL=$ARMB_KERNEL ARMB_REPO=$ARMB_REPO"
+          sudo bash compile-kernel/tools/script/armbian_compile_kernel.sh \
+              -r "$ARMB_REPO" -k "$ARMB_KERNEL" \
+              -m all -n -stevenliuit -a true -t clang -f rk3588 -d true -s false -z xz
+          ls -lh compile-kernel/output/ 2>/dev/null || true
+
+      - name: Package kernel artifacts
+        working-directory: amlogic-s9xxx-armbian
+        run: |
+          # The full Armbian base image build requires running on a native Armbian
+          # OS (compile.sh in the upstream ophub repo enforces /etc/armbian-release).
+          # The rebuild step that swaps our G98 kernel into a base image needs to run
+          # on an Armbian device, not in CI. The kernel packages we built here
+          # can be installed on any Armbian rk3588 image via:
+          #   sudo dpkg -i linux-image_6.6.*.deb linux-dtb-rockchip64_*.deb
+          #   sudo apt install ./linux-modules-*.deb
+          #   sudo update-grub && sudo reboot
+          # Or by using ophub's ./rebuild script:
+          #   sudo ./rebuild -b g98 -k 6.6.y -r stevenliuit/linux -a true -t ext4 -n -stevenliuit
+          mkdir -p build/output/images
+          cp compile-kernel/output/*.tar* build/output/images/ 2>/dev/null || true
+          cp compile-kernel/output/debs/*.deb build/output/images/ 2>/dev/null || true
+          cp compile-kernel/output/boot-*.img.xz build/output/images/ 2>/dev/null || true
+          cat > build/output/images/README.txt << 'EOF'
+          G98 Armbian kernel build (kernel + DTB packages only)
+
+          This build contains the G98 kernel (Linux 6.6.144) and DTB
+          packages built by ophub's compile-kernel.sh. It does NOT include
+          a complete Armbian rootfs image (that requires running on an
+          Armbian device).
+
+          To create a bootable G98 Armbian image:
+            1. Download an official Armbian noble rk3588 image (e.g. rock-5b):
+               wget https://redirect.armbian.com/region/<region>/board/rock-5b
+            2. Extract the image:
+               sudo losetup -P Armbian_*.img
+               sudo mount /dev/loop0p1 /mnt
+            3. On the same machine (or extract to a chroot), install the
+               built kernel packages:
+               sudo dpkg -i linux-image_6.6.*.deb
+               sudo dpkg -i linux-dtb-rockchip64_*.deb
+               sudo depmod -a 6.6.144-stevenliuit
+            4. Or use ophub's ./rebuild script to create a G98 image:
+               sudo ./rebuild -b g98 -k 6.6.y \
+                   -r stevenliuit/linux -a true -t ext4 -n -stevenliuit
+          EOF
+          ls -lh build/output/images/
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: g98-armbian-kernel
+          path: amlogic-s9xxx-armbian/build/output/images/*
+          if-no-files-found: error
+
+      - name: Optional release
+        if: ${{ inputs.push_to_release == 'true' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.release_tag }}
+          files: |
+            amlogic-s9xxx-armbian/build/output/images/*
